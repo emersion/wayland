@@ -1912,7 +1912,6 @@ void
 wl_priv_signal_init(struct wl_priv_signal *signal)
 {
 	wl_list_init(&signal->listener_list);
-	wl_list_init(&signal->emit_list);
 }
 
 /** Add a listener to a signal
@@ -1947,9 +1946,6 @@ wl_priv_signal_get(struct wl_priv_signal *signal, wl_notify_func_t notify)
 	wl_list_for_each(l, &signal->listener_list, link)
 		if (l->notify == notify)
 			return l;
-	wl_list_for_each(l, &signal->emit_list, link)
-		if (l->notify == notify)
-			return l;
 
 	return NULL;
 }
@@ -1966,25 +1962,30 @@ wl_priv_signal_emit(struct wl_priv_signal *signal, void *data)
 {
 	struct wl_listener *l;
 	struct wl_list *pos;
+	struct wl_listener cursor;
+	struct wl_listener end;
 
-	wl_list_insert_list(&signal->emit_list, &signal->listener_list);
-	wl_list_init(&signal->listener_list);
-
-	/* Take every element out of the list and put them in a temporary list.
-	 * This way, the 'it' func can remove any element it wants from the list
-	 * without troubles, because we always get the first element, not the
-	 * one after the current, which may be invalid.
+	/* Add two special markers: one cursor and one end marker. This way, we know
+	 * that we've already called listeners on the left of the cursor and that we
+	 * don't want to call listeners on the right of the end marker. The 'it'
+	 * function can remove any element it wants from the list without troubles.
 	 * wl_list_for_each_safe tries to be safe but it fails: it works fine
 	 * if the current item is removed, but not if the next one is. */
-	while (!wl_list_empty(&signal->emit_list)) {
-		pos = signal->emit_list.next;
+	wl_list_insert(&signal->listener_list, &cursor.link);
+	wl_list_insert(signal->listener_list.prev, &end.link);
+
+	while (cursor.link.next != &end.link) {
+		pos = cursor.link.next;
 		l = wl_container_of(pos, l, link);
 
-		wl_list_remove(pos);
-		wl_list_insert(&signal->listener_list, pos);
+		wl_list_remove(&cursor.link);
+		wl_list_insert(pos, &cursor.link);
 
 		l->notify(l, data);
 	}
+
+	wl_list_remove(&cursor.link);
+	wl_list_remove(&end.link);
 }
 
 /** \endcond INTERNAL */
